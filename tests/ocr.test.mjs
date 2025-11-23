@@ -5,7 +5,7 @@ import path from 'path';
 import GeminiOCR from '../index.mjs';
 
 const CONFIG_FILE = './config.json';
-const TEST_CASES_DIR = './test_cases';
+const TEST_CASES_DIR = './tests/cases';
 
 // Helper to load config
 async function loadConfig() {
