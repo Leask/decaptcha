@@ -19,7 +19,8 @@ async function loadConfig() {
 
 test('CAPTCHA Recognition Accuracy Test', async (t) => {
     const config = await loadConfig();
-    const apiKey = config.google_api_key;
+    const apiKey = config.api_key;
+    const provider = config.provider || 'google';
 
     if (!apiKey) {
         console.warn('⚠️  Skipping tests: No API key found in config.json');
@@ -28,7 +29,7 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
 
     const ocr = new VllmOcr({
         apiKey: apiKey,
-        model: 'gemini-3-pro-preview' // Or configurable
+        provider: provider
     });
 
     let files;
@@ -53,16 +54,16 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
 
             try {
                 const actual = await ocr.recognize(filePath);
-                
+
                 // Normalize
                 const expectedNorm = expected.toUpperCase().trim();
                 const actualNorm = actual.toUpperCase().trim();
-                
+
                 console.log(`[${filename}] Expected: ${expectedNorm}, Actual: ${actualNorm}`);
 
                 assert.strictEqual(actualNorm, expectedNorm, `Expected ${expectedNorm}, got ${actualNorm}`);
             } catch (error) {
-                 assert.fail(`Error processing ${filename}: ${error.message}`);
+                assert.fail(`Error processing ${filename}: ${error.message}`);
             }
 
         });
