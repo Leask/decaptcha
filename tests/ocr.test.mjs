@@ -20,7 +20,7 @@ async function loadConfig() {
 test('CAPTCHA Recognition Accuracy Test', async (t) => {
     const config = await loadConfig();
     const apiKey = config.api_key;
-    const provider = config.provider || 'google';
+    const provider = config.provider;
 
     if (!apiKey) {
         console.warn('⚠️  Skipping tests: No API key found in config.json');
