@@ -46,7 +46,21 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
         return;
     }
 
+    // --- Fast Mode Logic ---
+    const isFastMode = process.argv.includes('--fast');
+    if (isFastMode) {
+        const limit = 10;
+        console.log(`\n⚡ FAST MODE ENABLED: Limiting to first ${limit} images.`);
+        files = files.slice(0, limit);
+    }
+
     console.log(`\n🚀 Starting tests with ${files.length} images using models: ${ocr.models.join(', ')}\n`);
+
+    // Track stats for each model
+    const modelStats = {};
+    ocr.models.forEach(m => {
+        modelStats[m] = { correct: 0, total: 0 };
+    });
 
     for (const filename of files) {
         await t.test(`Recognize ${filename}`, async () => {
@@ -63,17 +77,26 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
 
                 console.log(`${statusIcon} [${filename}] Expected: ${expectedNorm} | Voted: ${actualNorm || 'NULL'}`);
                 
-                // Detailed breakdown
+                // Detailed breakdown & Stats update
                 console.log(`   Details:`);
                 result.details.forEach(r => {
-                    const modelName = r.model.split('/').pop(); // Shorten name for display
+                    const modelId = r.model;
+                    const modelName = modelId.split('/').pop(); // Shorten name for display
                     let modelStatus = '⚠️ Error';
                     let output = r.error;
 
+                    // Update stats
+                    modelStats[modelId].total++;
+
                     if (!r.error) {
                         const rText = r.text;
-                        modelStatus = (rText === expectedNorm) ? '✅' : '❌';
+                        const isModelCorrect = rText === expectedNorm;
+                        modelStatus = isModelCorrect ? '✅' : '❌';
                         output = rText;
+                        
+                        if (isModelCorrect) {
+                            modelStats[modelId].correct++;
+                        }
                     }
                     
                     console.log(`     - ${modelStatus} ${modelName}: ${output} (${r.duration}ms)`);
@@ -86,4 +109,26 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
             }
         });
     }
+
+    // --- Model Accuracy Leaderboard ---
+    console.log('\n🏆 Model Accuracy Leaderboard 🏆');
+    console.log('---------------------------------------------------------------');
+    console.log('| Rank | Model Name                         | Accuracy | Score  |');
+    console.log('---------------------------------------------------------------');
+
+    const leaderboard = Object.entries(modelStats)
+        .map(([model, stats]) => {
+            const accuracy = stats.total > 0 ? (stats.correct / stats.total) * 100 : 0;
+            return { model, accuracy, ...stats };
+        })
+        .sort((a, b) => b.accuracy - a.accuracy);
+
+    leaderboard.forEach((entry, index) => {
+        const rank = index + 1;
+        const modelName = entry.model.split('/').pop().padEnd(30); // Shortened name
+        const accuracy = entry.accuracy.toFixed(2).padStart(6);
+        const score = `${entry.correct}/${entry.total}`.padStart(6);
+        console.log(`| ${rank.toString().padEnd(4)} | ${modelName} | ${accuracy}% | ${score} |`);
+    });
+    console.log('---------------------------------------------------------------\n');
 });

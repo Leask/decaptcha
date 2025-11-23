@@ -6,7 +6,14 @@ class VllmOcr {
     constructor(config = {}) {
         this.apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
         // Default to a set of high-performing models if none provided
-        this.models = config.models || [];
+        this.models = config.models || [
+            'openai/gpt-5.1-reasoning',
+            'google/gemini-3.0-pro',
+            'google/gemini-2.5-flash-preview',
+            'anthropic/claude-3.5-sonnet',
+            'meta-llama/llama-3.2-90b-vision-instruct',
+            'mistralai/pixtral-12b'
+        ];
         this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
         this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
         this.appName = config.appName || 'Decaptcha';
@@ -100,10 +107,28 @@ class VllmOcr {
             let rawText = '';
             try {
                 const content = data.choices[0].message.content;
-                const parsed = JSON.parse(content);
+                
+                // Robust JSON extraction
+                let jsonString = content;
+                
+                // 1. Remove markdown code blocks if present
+                const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+                if (codeBlockMatch) {
+                    jsonString = codeBlockMatch[1];
+                }
+
+                // 2. Find the first '{' and last '}' to isolate the JSON object
+                const startIndex = jsonString.indexOf('{');
+                const endIndex = jsonString.lastIndexOf('}');
+                
+                if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+                    jsonString = jsonString.substring(startIndex, endIndex + 1);
+                }
+
+                const parsed = JSON.parse(jsonString);
                 rawText = parsed.text;
             } catch (e) {
-                throw new Error(`Failed to parse JSON response: ${e.message}`);
+                throw new Error(`Failed to parse JSON response: ${e.message}. Content: ${data.choices?.[0]?.message?.content?.substring(0, 100)}...`);
             }
 
             if (typeof rawText !== 'string') {
