@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs/promises';
 import path from 'path';
-import GeminiOCR from '../src/ocr.mjs';
+import GeminiOCR from '../index.mjs';
 
 const CONFIG_FILE = './config.json';
 const TEST_CASES_DIR = './test_cases';
