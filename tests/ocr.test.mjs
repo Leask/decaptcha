@@ -27,9 +27,13 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
         return;
     }
 
+    // --- Fast Mode Logic ---
+    const isFastMode = process.argv.includes('--fast') || process.env.FAST;
+
     const ocr = new VllmOcr({
         apiKey: apiKey,
-        models: models 
+        models: models,
+        fastMode: isFastMode
     });
 
     let files;
@@ -46,11 +50,9 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
         return;
     }
 
-    // --- Fast Mode Logic ---
-    const isFastMode = process.argv.includes('--fast') || process.env.FAST;
     if (isFastMode) {
         const limit = 10;
-        console.log(`\n⚡ FAST MODE ENABLED: Limiting to first ${limit} images.`);
+        console.log(`\n⚡ FAST MODE ENABLED: Limiting to first ${limit} images & using Race-to-Consensus.`);
         files = files.slice(0, limit);
     }
 
@@ -61,6 +63,9 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
     ocr.models.forEach(m => {
         modelStats[m] = { correct: 0, total: 0 };
     });
+    // Track stats for the Voting System itself
+    const VOTED_KEY = '🔥 VOTED (System)';
+    modelStats[VOTED_KEY] = { correct: 0, total: 0 };
 
     for (const filename of files) {
         await t.test(`Recognize ${filename}`, async () => {
@@ -75,28 +80,36 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
                 const isMatch = actualNorm === expectedNorm;
                 const statusIcon = isMatch ? '✅' : '❌';
 
+                // Update Voted Stats
+                modelStats[VOTED_KEY].total++;
+                if (isMatch) {
+                    modelStats[VOTED_KEY].correct++;
+                }
+
                 console.log(`${statusIcon} [${filename}] Expected: ${expectedNorm} | Voted: ${actualNorm || 'NULL'}`);
                 
                 // Detailed breakdown & Stats update
                 console.log(`   Details:`);
                 result.details.forEach(r => {
                     const modelId = r.model;
+                    
+                    // Update stats for individual models
+                    if (modelStats[modelId]) {
+                        modelStats[modelId].total++;
+                        
+                        if (!r.error && r.text === expectedNorm) {
+                            modelStats[modelId].correct++;
+                        }
+                    }
+                    
                     const modelName = modelId.split('/').pop(); // Shorten name for display
                     let modelStatus = '⚠️ Error';
                     let output = r.error;
 
-                    // Update stats
-                    modelStats[modelId].total++;
-
                     if (!r.error) {
                         const rText = r.text;
-                        const isModelCorrect = rText === expectedNorm;
-                        modelStatus = isModelCorrect ? '✅' : '❌';
+                        modelStatus = (rText === expectedNorm) ? '✅' : '❌';
                         output = rText;
-                        
-                        if (isModelCorrect) {
-                            modelStats[modelId].correct++;
-                        }
                     }
                     
                     console.log(`     - ${modelStatus} ${modelName}: ${output} (${r.duration}ms)`);
@@ -125,7 +138,13 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
 
     leaderboard.forEach((entry, index) => {
         const rank = index + 1;
-        const modelName = entry.model.split('/').pop().padEnd(30); // Shortened name
+        // Clean up the display name
+        let displayModelName = entry.model;
+        if (displayModelName !== VOTED_KEY) {
+            displayModelName = displayModelName.split('/').pop();
+        }
+        
+        const modelName = displayModelName.padEnd(30);
         const accuracy = entry.accuracy.toFixed(2).padStart(6);
         const score = `${entry.correct}/${entry.total}`.padStart(6);
         console.log(`| ${rank.toString().padEnd(4)} | ${modelName} | ${accuracy}% | ${score} |`);

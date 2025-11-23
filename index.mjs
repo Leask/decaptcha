@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 
-const PROMPT = "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. Output a JSON object with a property 'text' containing the identified characters.";
+const PROMPT = "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. You need to simulate the characteristics of how the human eye perceives images for acute analysis. Return the three most probable and distinct results, ranked by likelihood. Output a JSON object with a property 'results' array containing the identified characters results. Example: {\"results\": [\"ABCD\", \"ABCE\", \"ABCF\"]}.";
 
 class VllmOcr {
     constructor(config = {}) {
@@ -17,6 +17,7 @@ class VllmOcr {
         this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
         this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
         this.appName = config.appName || 'Decaptcha';
+        this.fastMode = config.fastMode || false;
 
         if (!this.apiKey) {
             throw new Error('OpenRouter API Key is required.');
@@ -71,8 +72,8 @@ class VllmOcr {
                             const txt = result.text;
                             counts[txt] = (counts[txt] || 0) + 1;
 
-                            // Consensus Reached: 2 models agree
-                            if (counts[txt] >= 2) {
+                            // Consensus Reached: 2 models agree (Only in Fast Mode)
+                            if (this.fastMode && counts[txt] >= 2) {
                                 resolved = true;
                                 controller.abort(); // Cancel others
                                 resolve({
