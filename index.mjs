@@ -6,11 +6,7 @@ class VllmOcr {
     constructor(config = {}) {
         this.apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
         // Default to a set of high-performing models if none provided
-        this.models = config.models || [
-            'google/gemini-2.0-flash-001',
-            'openai/gpt-4o',
-            'anthropic/claude-3.5-sonnet'
-        ];
+        this.models = config.models || [];
         this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
         this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
         this.appName = config.appName || 'Decaptcha';
@@ -36,7 +32,7 @@ class VllmOcr {
         }
 
         // Execute all model requests in parallel
-        const promises = this.models.map(model => 
+        const promises = this.models.map(model =>
             this._callOpenRouter(model, base64Image, mimeType)
                 .then(result => ({ model, ...result }))
                 .catch(err => ({ model, error: err.message, text: null }))
@@ -77,7 +73,7 @@ class VllmOcr {
             ],
             response_format: { type: "json_object" },
             // OpenRouter specific: allow reasoning for models that support it (like o1/gemini-thinking)
-            // though for standard models it might be ignored. 
+            // though for standard models it might be ignored.
             // We'll omit 'reasoning_effort' for generic compatibility unless specific models need it.
         };
 
@@ -137,7 +133,7 @@ class VllmOcr {
 
     _vote(results) {
         const counts = {};
-        
+
         for (const result of results) {
             if (result.text) {
                 counts[result.text] = (counts[result.text] || 0) + 1;
