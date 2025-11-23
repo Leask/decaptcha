@@ -10,9 +10,9 @@ class VllmOcr {
             'google/gemini-3-pro-preview',
             'openai/gpt-5.1',
             'google/gemini-3-pro-image-preview',
-            'google/gemini-2.5-flash',
+            'meta-llama/llama-4-maverick',
             'qwen/qwen3-vl-235b-a22b-thinking',
-            'anthropic/claude-sonnet-4.5'
+            'opengvlab/internvl3-78b'
         ];
         this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
         this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
@@ -38,23 +38,68 @@ class VllmOcr {
             throw new Error('Invalid input. Expected file path string or Buffer.');
         }
 
-        // Execute all model requests in parallel
-        const promises = this.models.map(model =>
-            this._callOpenRouter(model, base64Image, mimeType)
-                .then(result => ({ model, ...result }))
-                .catch(err => ({ model, error: err.message, text: null }))
-        );
+        const controller = new AbortController();
+        const signal = controller.signal;
 
-        const results = await Promise.all(promises);
-        const finalResult = this._vote(results);
+        const results = [];
+        const counts = {};
+        let completedCount = 0;
+        let resolved = false;
 
-        return {
-            final_text: finalResult,
-            details: results
-        };
+        return new Promise((resolve) => {
+            // Helper to check if we need to close the loop
+            const checkCompletion = () => {
+                completedCount++;
+                // If all models finished (or failed) and no consensus was triggered early
+                if (completedCount === this.models.length && !resolved) {
+                    resolved = true;
+                    const finalResult = this._vote(results);
+                    resolve({
+                        final_text: finalResult,
+                        details: this._sortResultsByModelOrder(results)
+                    });
+                }
+            };
+
+            this.models.forEach(model => {
+                this._callOpenRouter(model, base64Image, mimeType, signal)
+                    .then(result => {
+                        const resObj = { model, ...result };
+                        results.push(resObj);
+
+                        if (!resolved && result.text) {
+                            const txt = result.text;
+                            counts[txt] = (counts[txt] || 0) + 1;
+
+                            // Consensus Reached: 2 models agree
+                            if (counts[txt] >= 2) {
+                                resolved = true;
+                                controller.abort(); // Cancel others
+                                resolve({
+                                    final_text: txt,
+                                    details: this._sortResultsByModelOrder(results)
+                                });
+                            }
+                        }
+                        checkCompletion();
+                    })
+                    .catch(err => {
+                        // If aborted, it might throw here depending on timing, or return generic error
+                        results.push({ model, error: err.name === 'AbortError' ? 'Skipped (Consensus Reached)' : err.message, text: null });
+                        checkCompletion();
+                    });
+            });
+        });
     }
 
-    async _callOpenRouter(model, base64Image, mimeType) {
+    _sortResultsByModelOrder(results) {
+        // Sort results to match the config model order for consistent reporting
+        return results.sort((a, b) => {
+            return this.models.indexOf(a.model) - this.models.indexOf(b.model);
+        });
+    }
+
+    async _callOpenRouter(model, base64Image, mimeType, signal) {
         const url = `${this.baseUrl}/chat/completions`;
         const start = Date.now();
 
@@ -79,9 +124,6 @@ class VllmOcr {
                 }
             ],
             response_format: { type: "json_object" },
-            // OpenRouter specific: allow reasoning for models that support it (like o1/gemini-thinking)
-            // though for standard models it might be ignored.
-            // We'll omit 'reasoning_effort' for generic compatibility unless specific models need it.
         };
 
         try {
@@ -93,7 +135,8 @@ class VllmOcr {
                     'HTTP-Referer': this.siteUrl,
                     'X-Title': this.appName,
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                signal: signal // Pass the abort signal
             });
 
             if (!response.ok) {
@@ -142,6 +185,10 @@ class VllmOcr {
             };
 
         } catch (error) {
+            // If aborted, allow the caller to handle the logic or return specific object
+            if (error.name === 'AbortError') {
+                throw error; // Re-throw to be caught by caller's catch block
+            }
             return {
                 text: null,
                 error: error.message,
@@ -149,7 +196,6 @@ class VllmOcr {
             };
         }
     }
-
     _postProcess(text) {
         // Post-processing: toUpperCase -> remove non-A-Z0-9
         if (!text) return '';
