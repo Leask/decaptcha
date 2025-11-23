@@ -7,7 +7,7 @@ class VllmOcr {
     constructor(config = {}) {
         this.provider = config.provider || 'google'; // 'google' or 'openai'
         this.apiKey = config.apiKey || (this.provider === 'google' ? process.env.GOOGLE_API_KEY : process.env.OPENAI_API_KEY);
-        this.model = config.model || (this.provider === 'google' ? 'gemini-3-pro-preview' : 'gpt-4o');
+        this.model = config.model || (this.provider === 'google' ? 'gemini-3-pro-preview' : 'gpt-5.1');
         this.baseUrl = config.baseUrl; // Optional custom base URL
 
         if (!this.apiKey) {
@@ -112,6 +112,7 @@ class VllmOcr {
 
         const payload = {
             model: this.model,
+            reasoning_effort: "high",
             messages: [
                 {
                     role: "system",
