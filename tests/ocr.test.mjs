@@ -58,6 +58,8 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
                 const expectedNorm = expected.toUpperCase().trim();
                 const actualNorm = actual.toUpperCase().trim();
                 
+                console.log(`[${filename}] Expected: ${expectedNorm}, Actual: ${actualNorm}`);
+
                 assert.strictEqual(actualNorm, expectedNorm, `Expected ${expectedNorm}, got ${actualNorm}`);
             } catch (error) {
                  assert.fail(`Error processing ${filename}: ${error.message}`);
