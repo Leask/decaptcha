@@ -17,10 +17,10 @@ async function loadConfig() {
     }
 }
 
-test('CAPTCHA Recognition Accuracy Test', async (t) => {
+test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
     const config = await loadConfig();
-    const apiKey = config.api_key;
-    const provider = config.provider;
+    const apiKey = config.openrouter_api_key || config.api_key;
+    const models = config.models;
 
     if (!apiKey) {
         console.warn('⚠️  Skipping tests: No API key found in config.json');
@@ -29,7 +29,7 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
 
     const ocr = new VllmOcr({
         apiKey: apiKey,
-        provider: provider
+        models: models 
     });
 
     let files;
@@ -46,26 +46,44 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
         return;
     }
 
-    // Use a subtest for each file to get nice reporting
-    for (const [index, filename] of files.entries()) {
+    console.log(`\n🚀 Starting tests with ${files.length} images using models: ${ocr.models.join(', ')}\n`);
+
+    for (const filename of files) {
         await t.test(`Recognize ${filename}`, async () => {
             const filePath = path.join(TEST_CASES_DIR, filename);
             const expected = path.parse(filename).name;
+            const expectedNorm = expected.toUpperCase().trim();
 
             try {
-                const actual = await ocr.recognize(filePath);
+                const result = await ocr.recognize(filePath);
+                const actualNorm = result.final_text;
 
-                // Normalize
-                const expectedNorm = expected.toUpperCase().trim();
-                const actualNorm = actual.toUpperCase().trim();
+                const isMatch = actualNorm === expectedNorm;
+                const statusIcon = isMatch ? '✅' : '❌';
 
-                console.log(`[${filename}] Expected: ${expectedNorm}, Actual: ${actualNorm}`);
+                console.log(`${statusIcon} [${filename}] Expected: ${expectedNorm} | Voted: ${actualNorm || 'NULL'}`);
+                
+                // Detailed breakdown
+                console.log(`   Details:`);
+                result.details.forEach(r => {
+                    const modelName = r.model.split('/').pop(); // Shorten name for display
+                    let modelStatus = '⚠️ Error';
+                    let output = r.error;
+
+                    if (!r.error) {
+                        const rText = r.text;
+                        modelStatus = (rText === expectedNorm) ? '✅' : '❌';
+                        output = rText;
+                    }
+                    
+                    console.log(`     - ${modelStatus} ${modelName}: ${output} (${r.duration}ms)`);
+                });
+                console.log(''); // Empty line separator
 
                 assert.strictEqual(actualNorm, expectedNorm, `Expected ${expectedNorm}, got ${actualNorm}`);
             } catch (error) {
-                assert.fail(`Error processing ${filename}: ${error.message}`);
+                 assert.fail(`Error processing ${filename}: ${error.message}`);
             }
-
         });
     }
 });

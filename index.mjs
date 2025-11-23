@@ -1,18 +1,22 @@
 import fs from 'fs/promises';
-import path from 'path';
 
-const PROMPT = "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear.The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. Output a JSON object with a property 'text' containing the identified characters.";
+const PROMPT = "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. Output a JSON object with a property 'text' containing the identified characters.";
 
 class VllmOcr {
     constructor(config = {}) {
-        this.provider = config.provider || 'google'; // 'google' or 'openai'
-        this.apiKey = config.apiKey || (this.provider === 'google' ? process.env.GOOGLE_API_KEY : process.env.OPENAI_API_KEY);
-        this.model = config.model || (this.provider === 'google' ? 'gemini-3-pro-preview' : 'gpt-5.1');
-        this.model = config.model || (this.provider === 'google' ? 'gemini-3-pro-image-preview' : 'gpt-5.1');
-        this.baseUrl = config.baseUrl; // Optional custom base URL
+        this.apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
+        // Default to a set of high-performing models if none provided
+        this.models = config.models || [
+            'google/gemini-2.0-flash-001',
+            'openai/gpt-4o',
+            'anthropic/claude-3.5-sonnet'
+        ];
+        this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
+        this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
+        this.appName = config.appName || 'Decaptcha';
 
         if (!this.apiKey) {
-            throw new Error(`API Key is required for provider ${this.provider}.`);
+            throw new Error('OpenRouter API Key is required.');
         }
     }
 
@@ -31,89 +35,28 @@ class VllmOcr {
             throw new Error('Invalid input. Expected file path string or Buffer.');
         }
 
-        if (this.provider === 'openai') {
-            return this._callOpenAiApi(base64Image, mimeType);
-        } else {
-            return this._callGoogleApi(base64Image, mimeType);
-        }
-    }
+        // Execute all model requests in parallel
+        const promises = this.models.map(model => 
+            this._callOpenRouter(model, base64Image, mimeType)
+                .then(result => ({ model, ...result }))
+                .catch(err => ({ model, error: err.message, text: null }))
+        );
 
-    async _callGoogleApi(base64Image, mimeType) {
-        const baseUrl = this.baseUrl || 'https://generativelanguage.googleapis.com';
-        const url = `${baseUrl}/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+        const results = await Promise.all(promises);
+        const finalResult = this._vote(results);
 
-        const payload = {
-            contents: [{
-                parts: [
-                    { text: PROMPT },
-                    {
-                        inline_data: {
-                            mime_type: mimeType,
-                            data: base64Image
-                        }
-                    }
-                ]
-            }],
-            generationConfig: {
-                response_mime_type: "application/json",
-                thinking_config: {
-                    include_thoughts: true
-                }
-            }
+        return {
+            final_text: finalResult,
+            details: results
         };
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Google API Error: ${response.status} - ${errorText}`);
-        }
-
-        const data = await response.json();
-
-        try {
-            // Find the part that contains the JSON response
-            const parts = data.candidates[0].content.parts;
-            let rawText = '';
-
-            for (const part of parts) {
-                try {
-                    // Try to parse each part as JSON
-                    const parsed = JSON.parse(part.text);
-                    if (parsed.text) {
-                        rawText = parsed.text;
-                        break;
-                    }
-                } catch (e) {
-                    // Not valid JSON or not the part we want, continue
-                }
-            }
-
-            if (!rawText) {
-                throw new Error('No valid JSON response found in candidates');
-            }
-
-            return this._postProcess(rawText);
-
-        } catch (e) {
-            console.error('Failed to parse Google API response:', JSON.stringify(data, null, 2));
-            throw new Error(`Failed to parse Google API response: ${e.message}`);
-        }
     }
 
-    async _callOpenAiApi(base64Image, mimeType) {
-        const baseUrl = this.baseUrl || 'https://api.openai.com/v1';
-        const url = `${baseUrl}/chat/completions`;
+    async _callOpenRouter(model, base64Image, mimeType) {
+        const url = `${this.baseUrl}/chat/completions`;
+        const start = Date.now();
 
         const payload = {
-            model: this.model,
-            reasoning_effort: "high",
+            model: model,
             messages: [
                 {
                     role: "system",
@@ -132,45 +75,82 @@ class VllmOcr {
                     ]
                 }
             ],
-            response_format: { type: "json_object" }
+            response_format: { type: "json_object" },
+            // OpenRouter specific: allow reasoning for models that support it (like o1/gemini-thinking)
+            // though for standard models it might be ignored. 
+            // We'll omit 'reasoning_effort' for generic compatibility unless specific models need it.
         };
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${this.apiKey}`
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`OpenAI API Error: ${response.status} - ${errorText}`);
-        }
-
-        const data = await response.json();
-
         try {
-            const content = data.choices[0].message.content;
-            const parsed = JSON.parse(content);
-            const rawText = parsed.text;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'HTTP-Referer': this.siteUrl,
+                    'X-Title': this.appName,
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API Error: ${response.status} - ${errorText}`);
+            }
+
+            const data = await response.json();
+            const duration = Date.now() - start;
+
+            let rawText = '';
+            try {
+                const content = data.choices[0].message.content;
+                const parsed = JSON.parse(content);
+                rawText = parsed.text;
+            } catch (e) {
+                throw new Error(`Failed to parse JSON response: ${e.message}`);
+            }
 
             if (typeof rawText !== 'string') {
                 throw new Error('JSON response missing "text" string field');
             }
 
-            return this._postProcess(rawText);
+            return {
+                text: this._postProcess(rawText),
+                raw: rawText,
+                duration
+            };
 
-        } catch (e) {
-            console.error('Failed to parse OpenAI API response:', JSON.stringify(data, null, 2));
-            throw new Error(`Failed to parse OpenAI API response: ${e.message}`);
+        } catch (error) {
+            return {
+                text: null,
+                error: error.message,
+                duration: Date.now() - start
+            };
         }
     }
 
     _postProcess(text) {
         // Post-processing: toUpperCase -> remove non-A-Z0-9
+        if (!text) return '';
         return text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+
+    _vote(results) {
+        const counts = {};
+        
+        for (const result of results) {
+            if (result.text) {
+                counts[result.text] = (counts[result.text] || 0) + 1;
+            }
+        }
+
+        // Convert to array and sort by count (descending)
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+        if (sorted.length === 0) return null;
+
+        // Return the text with the highest votes
+        return sorted[0][0];
     }
 }
 
