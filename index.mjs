@@ -7,12 +7,12 @@ class VllmOcr {
         this.apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
         // Default to a set of high-performing models if none provided
         this.models = config.models || [
+            'google/gemini-3-pro-preview',
             'openai/gpt-5.1',
-            'google/gemini-2.0-flash-thinking-exp:free',
-            'google/gemini-2.0-flash-exp:free',
-            'anthropic/claude-3.5-sonnet',
-            'meta-llama/llama-3.2-90b-vision-instruct',
-            'mistralai/pixtral-12b'
+            'google/gemini-3-pro-image-preview',
+            'google/gemini-2.5-flash',
+            'qwen/qwen3-vl-235b-a22b-thinking',
+            'anthropic/claude-sonnet-4.5'
         ];
         this.baseUrl = config.baseUrl || 'https://openrouter.ai/api/v1';
         this.siteUrl = config.siteUrl || 'https://github.com/leask/decaptcha';
@@ -107,10 +107,10 @@ class VllmOcr {
             let rawText = '';
             try {
                 const content = data.choices[0].message.content;
-                
+
                 // Robust JSON extraction
                 let jsonString = content;
-                
+
                 // 1. Remove markdown code blocks if present
                 const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
                 if (codeBlockMatch) {
@@ -120,7 +120,7 @@ class VllmOcr {
                 // 2. Find the first '{' and last '}' to isolate the JSON object
                 const startIndex = jsonString.indexOf('{');
                 const endIndex = jsonString.lastIndexOf('}');
-                
+
                 if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
                     jsonString = jsonString.substring(startIndex, endIndex + 1);
                 }
@@ -159,6 +159,7 @@ class VllmOcr {
     _vote(results) {
         const counts = {};
 
+        // Count votes for each result text
         for (const result of results) {
             if (result.text) {
                 counts[result.text] = (counts[result.text] || 0) + 1;
@@ -166,12 +167,36 @@ class VllmOcr {
         }
 
         // Convert to array and sort by count (descending)
-        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        const sortedCandidates = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
-        if (sorted.length === 0) return null;
+        if (sortedCandidates.length === 0) return null;
 
-        // Return the text with the highest votes
-        return sorted[0][0];
+        const maxVotes = sortedCandidates[0][1];
+
+        // Find all candidates with the maximum number of votes
+        const topCandidates = sortedCandidates
+            .filter(candidate => candidate[1] === maxVotes)
+            .map(candidate => candidate[0]);
+
+        // If there's a clear winner, return it
+        if (topCandidates.length === 1) {
+            return topCandidates[0];
+        }
+
+        // Tie-breaking: Choose the result from the highest-priority model
+        // Iterate through the models in order
+        for (const model of this.models) {
+            // Find the result produced by this model
+            const modelResult = results.find(r => r.model === model);
+
+            // If this model produced a result and that result is among the top candidates, pick it
+            if (modelResult && modelResult.text && topCandidates.includes(modelResult.text)) {
+                return modelResult.text;
+            }
+        }
+
+        // Fallback (should rarely happen if logic is correct): return the first top candidate
+        return topCandidates[0];
     }
 }
 

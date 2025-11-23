@@ -47,7 +47,7 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
     }
 
     // --- Fast Mode Logic ---
-    const isFastMode = process.argv.includes('--fast');
+    const isFastMode = process.argv.includes('--fast') || process.env.FAST;
     if (isFastMode) {
         const limit = 10;
         console.log(`\n⚡ FAST MODE ENABLED: Limiting to first ${limit} images.`);
