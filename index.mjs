@@ -45,7 +45,10 @@ class GeminiOCR {
                 ]
             }],
             generationConfig: {
-                response_mime_type: "application/json"
+                response_mime_type: "application/json",
+                thinking_config: {
+                    include_thoughts: true
+                }
             }
         };
 
@@ -65,13 +68,28 @@ class GeminiOCR {
         const data = await response.json();
 
         try {
-            // In JSON mode, the text part contains the JSON string
-            const rawJsonString = data.candidates[0].content.parts[0].text;
-            const parsedJson = JSON.parse(rawJsonString);
-            const rawText = parsedJson.text; // Extract 'text' field
+            // Find the part that contains the JSON response
+            const parts = data.candidates[0].content.parts;
+            let rawText = '';
+            
+            for (const part of parts) {
+                try {
+                    // Try to parse each part as JSON
+                    const parsed = JSON.parse(part.text);
+                    if (parsed.text) {
+                        rawText = parsed.text;
+                        break;
+                    }
+                } catch (e) {
+                    // Not valid JSON or not the part we want, continue
+                }
+            }
 
-            if (typeof rawText !== 'string') {
-                throw new Error('JSON response missing "text" string field');
+            if (!rawText) {
+                 // Fallback: if no JSON part found, try to find first text part? 
+                 // Or maybe the thoughts are one part and the JSON is another. 
+                 // If we failed to find structured JSON, throw.
+                 throw new Error('No valid JSON response found in candidates');
             }
 
             // Post-processing: toUpperCase -> remove non-A-Z0-9
