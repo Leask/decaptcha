@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 
-class GeminiOCR {
+class VllmOcr {
     constructor(config = {}) {
         this.provider = config.provider || 'google'; // 'google' or 'openai'
         this.apiKey = config.apiKey || (this.provider === 'google' ? process.env.GOOGLE_API_KEY : process.env.OPENAI_API_KEY);
@@ -42,7 +42,7 @@ class GeminiOCR {
         const payload = {
             contents: [{
                 parts: [
-                    { text: "Read the text in this CAPTCHA image. Output a JSON object with a property 'text' containing the identified characters." },
+                    { text: "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. Output a JSON object with a property 'text' containing the identified characters." },
                     {
                         inline_data: {
                             mime_type: mimeType,
@@ -113,7 +113,7 @@ class GeminiOCR {
             messages: [
                 {
                     role: "system",
-                    content: "You are a CAPTCHA solver. Output valid JSON with a 'text' field containing the characters found in the image. No markdown, no explanations."
+                    content: "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. Output valid JSON with a 'text' field containing the characters found in the image."
                 },
                 {
                     role: "user",
@@ -170,5 +170,5 @@ class GeminiOCR {
     }
 }
 
-export default GeminiOCR;
+export default VllmOcr;
 

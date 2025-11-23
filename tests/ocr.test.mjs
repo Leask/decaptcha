@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs/promises';
 import path from 'path';
-import GeminiOCR from '../index.mjs';
+import VllmOcr from '../index.mjs';
 
 const CONFIG_FILE = './config.json';
 const TEST_CASES_DIR = './tests/cases';
@@ -26,7 +26,7 @@ test('CAPTCHA Recognition Accuracy Test', async (t) => {
         return;
     }
 
-    const ocr = new GeminiOCR({
+    const ocr = new VllmOcr({
         apiKey: apiKey,
         model: 'gemini-3-pro-preview' // Or configurable
     });
