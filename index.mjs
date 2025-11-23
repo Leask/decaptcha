@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+const PROMPT = "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear.The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. Output a JSON object with a property 'text' containing the identified characters.";
+
 class VllmOcr {
     constructor(config = {}) {
         this.provider = config.provider || 'google'; // 'google' or 'openai'
@@ -42,7 +44,7 @@ class VllmOcr {
         const payload = {
             contents: [{
                 parts: [
-                    { text: "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. Output a JSON object with a property 'text' containing the identified characters." },
+                    { text: PROMPT },
                     {
                         inline_data: {
                             mime_type: mimeType,
@@ -78,7 +80,7 @@ class VllmOcr {
             // Find the part that contains the JSON response
             const parts = data.candidates[0].content.parts;
             let rawText = '';
-            
+
             for (const part of parts) {
                 try {
                     // Try to parse each part as JSON
@@ -93,7 +95,7 @@ class VllmOcr {
             }
 
             if (!rawText) {
-                 throw new Error('No valid JSON response found in candidates');
+                throw new Error('No valid JSON response found in candidates');
             }
 
             return this._postProcess(rawText);
@@ -113,7 +115,7 @@ class VllmOcr {
             messages: [
                 {
                     role: "system",
-                    content: "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear. Output valid JSON with a 'text' field containing the characters found in the image."
+                    content: PROMPT,
                 },
                 {
                     role: "user",
@@ -171,4 +173,3 @@ class VllmOcr {
 }
 
 export default VllmOcr;
-
