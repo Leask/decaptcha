@@ -7,9 +7,9 @@ class VllmOcr {
         this.apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
         // Default to a set of high-performing models if none provided
         this.models = config.models || [
-            'openai/gpt-5.1-reasoning',
-            'google/gemini-3.0-pro',
-            'google/gemini-2.5-flash-preview',
+            'openai/gpt-5.1',
+            'google/gemini-2.0-flash-thinking-exp:free',
+            'google/gemini-2.0-flash-exp:free',
             'anthropic/claude-3.5-sonnet',
             'meta-llama/llama-3.2-90b-vision-instruct',
             'mistralai/pixtral-12b'
