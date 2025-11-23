@@ -92,27 +92,29 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
                 console.log(`   Details:`);
                 result.details.forEach(r => {
                     const modelId = r.model;
+                    const modelName = modelId.split('/').pop(); // Shorten name for display
+                    let modelStatus = '⚠️ Error';
+                    let output = r.error;
                     
                     // Update stats for individual models
                     if (modelStats[modelId]) {
                         modelStats[modelId].total++;
+                    }
+
+                    if (!r.error) {
+                        // Check if ANY candidate matches expected
+                        const candidates = r.candidates || [];
+                        const isModelCorrect = candidates.includes(expectedNorm);
                         
-                        if (!r.error && r.text === expectedNorm) {
+                        modelStatus = isModelCorrect ? '✅' : '❌';
+                        output = candidates.join(', '); // Show all possibilities
+                        
+                        if (isModelCorrect && modelStats[modelId]) {
                             modelStats[modelId].correct++;
                         }
                     }
                     
-                    const modelName = modelId.split('/').pop(); // Shorten name for display
-                    let modelStatus = '⚠️ Error';
-                    let output = r.error;
-
-                    if (!r.error) {
-                        const rText = r.text;
-                        modelStatus = (rText === expectedNorm) ? '✅' : '❌';
-                        output = rText;
-                    }
-                    
-                    console.log(`     - ${modelStatus} ${modelName}: ${output} (${r.duration}ms)`);
+                    console.log(`     - ${modelStatus} ${modelName}: [${output}] (${r.duration}ms)`);
                 });
                 console.log(''); // Empty line separator
 

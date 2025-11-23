@@ -43,15 +43,13 @@ class VllmOcr {
         const signal = controller.signal;
 
         const results = [];
-        const counts = {};
+        const globalCounts = {}; // Track votes across all candidates
         let completedCount = 0;
         let resolved = false;
 
         return new Promise((resolve) => {
-            // Helper to check if we need to close the loop
             const checkCompletion = () => {
                 completedCount++;
-                // If all models finished (or failed) and no consensus was triggered early
                 if (completedCount === this.models.length && !resolved) {
                     resolved = true;
                     const finalResult = this._vote(results);
@@ -68,25 +66,33 @@ class VllmOcr {
                         const resObj = { model, ...result };
                         results.push(resObj);
 
-                        if (!resolved && result.text) {
-                            const txt = result.text;
-                            counts[txt] = (counts[txt] || 0) + 1;
-
-                            // Consensus Reached: 2 models agree (Only in Fast Mode)
-                            if (this.fastMode && counts[txt] >= 2) {
-                                resolved = true;
-                                controller.abort(); // Cancel others
-                                resolve({
-                                    final_text: txt,
-                                    details: this._sortResultsByModelOrder(results)
-                                });
+                        if (!resolved && result.candidates && result.candidates.length > 0) {
+                            // Add votes from all candidates
+                            for (const cand of result.candidates) {
+                                if (cand) {
+                                    globalCounts[cand] = (globalCounts[cand] || 0) + 1;
+                                    
+                                    // Consensus Reached: 2 models agree on this candidate (Fast Mode)
+                                    if (this.fastMode && globalCounts[cand] >= 2) {
+                                        resolved = true;
+                                        controller.abort(); 
+                                        resolve({
+                                            final_text: cand,
+                                            details: this._sortResultsByModelOrder(results)
+                                        });
+                                        return; 
+                                    }
+                                }
                             }
                         }
                         checkCompletion();
                     })
                     .catch(err => {
-                        // If aborted, it might throw here depending on timing, or return generic error
-                        results.push({ model, error: err.name === 'AbortError' ? 'Skipped (Consensus Reached)' : err.message, text: null });
+                        results.push({ 
+                            model, 
+                            error: err.name === 'AbortError' ? 'Skipped (Consensus Reached)' : err.message, 
+                            candidates: [] 
+                        });
                         checkCompletion();
                     });
             });
@@ -100,151 +106,158 @@ class VllmOcr {
         });
     }
 
-    async _callOpenRouter(model, base64Image, mimeType, signal) {
-        const url = `${this.baseUrl}/chat/completions`;
-        const start = Date.now();
-
-        const payload = {
-            model: model,
-            messages: [
-                {
-                    role: "system",
-                    content: PROMPT,
-                },
-                {
-                    role: "user",
-                    content: [
-                        { type: "text", text: "Read the text in this CAPTCHA image." },
-                        {
-                            type: "image_url",
-                            image_url: {
-                                url: `data:${mimeType};base64,${base64Image}`
+        async _callOpenRouter(model, base64Image, mimeType, signal) {
+            const url = `${this.baseUrl}/chat/completions`;
+            const start = Date.now();
+    
+            const payload = {
+                model: model,
+                messages: [
+                    {
+                        role: "system",
+                        content: PROMPT,
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: "Read the text in this CAPTCHA image." },
+                            {
+                                type: "image_url",
+                                image_url: {
+                                    url: `data:${mimeType};base64,${base64Image}`
+                                }
                             }
-                        }
-                    ]
-                }
-            ],
-            response_format: { type: "json_object" },
-        };
-
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'HTTP-Referer': this.siteUrl,
-                    'X-Title': this.appName,
-                },
-                body: JSON.stringify(payload),
-                signal: signal // Pass the abort signal
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API Error: ${response.status} - ${errorText}`);
-            }
-
-            const data = await response.json();
-            const duration = Date.now() - start;
-
-            let rawText = '';
+                        ]
+                    }
+                ],
+                response_format: { type: "json_object" },
+            };
+    
             try {
-                const content = data.choices[0].message.content;
-
-                // Robust JSON extraction
-                let jsonString = content;
-
-                // 1. Remove markdown code blocks if present
-                const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-                if (codeBlockMatch) {
-                    jsonString = codeBlockMatch[1];
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'HTTP-Referer': this.siteUrl,
+                        'X-Title': this.appName,
+                    },
+                    body: JSON.stringify(payload),
+                    signal: signal // Pass the abort signal
+                });
+    
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`API Error: ${response.status} - ${errorText}`);
                 }
-
-                // 2. Find the first '{' and last '}' to isolate the JSON object
-                const startIndex = jsonString.indexOf('{');
-                const endIndex = jsonString.lastIndexOf('}');
-
-                if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
-                    jsonString = jsonString.substring(startIndex, endIndex + 1);
+    
+                const data = await response.json();
+                const duration = Date.now() - start;
+    
+                let candidates = [];
+                try {
+                    const content = data.choices[0].message.content;
+                    
+                    // Robust JSON extraction
+                    let jsonString = content;
+                    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+                    if (codeBlockMatch) jsonString = codeBlockMatch[1];
+    
+                    const startIndex = jsonString.indexOf('{');
+                    const endIndex = jsonString.lastIndexOf('}');
+                    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+                        jsonString = jsonString.substring(startIndex, endIndex + 1);
+                    }
+    
+                    const parsed = JSON.parse(jsonString);
+                    
+                    // Handle 'results' array or legacy 'text' field
+                    if (Array.isArray(parsed.results)) {
+                        candidates = parsed.results.map(t => this._postProcess(t)).filter(t => t);
+                    } else if (parsed.text) {
+                        const processed = this._postProcess(parsed.text);
+                        if (processed) candidates = [processed];
+                    }
+    
+                } catch (e) {
+                    throw new Error(`Failed to parse JSON response: ${e.message}. Content: ${data.choices?.[0]?.message?.content?.substring(0, 100)}...`);
                 }
-
-                const parsed = JSON.parse(jsonString);
-                rawText = parsed.text;
-            } catch (e) {
-                throw new Error(`Failed to parse JSON response: ${e.message}. Content: ${data.choices?.[0]?.message?.content?.substring(0, 100)}...`);
+    
+                if (candidates.length === 0) {
+                    // Throw if we found nothing valid
+                    throw new Error('JSON response missing "results" array or "text" field');
+                }
+    
+                return {
+                    candidates: candidates,
+                    duration
+                };
+    
+            } catch (error) {
+                // If aborted, allow the caller to handle the logic or return specific object
+                if (error.name === 'AbortError') {
+                    throw error; // Re-throw to be caught by caller's catch block
+                }
+                return {
+                    candidates: [],
+                    error: error.message,
+                    duration: Date.now() - start
+                };
             }
-
-            if (typeof rawText !== 'string') {
-                throw new Error('JSON response missing "text" string field');
-            }
-
-            return {
-                text: this._postProcess(rawText),
-                raw: rawText,
-                duration
-            };
-
-        } catch (error) {
-            // If aborted, allow the caller to handle the logic or return specific object
-            if (error.name === 'AbortError') {
-                throw error; // Re-throw to be caught by caller's catch block
-            }
-            return {
-                text: null,
-                error: error.message,
-                duration: Date.now() - start
-            };
-        }
-    }
-    _postProcess(text) {
+        }    _postProcess(text) {
         // Post-processing: toUpperCase -> remove non-A-Z0-9
         if (!text) return '';
         return text.toUpperCase().replace(/[^A-Z0-9]/g, '');
     }
 
-    _vote(results) {
-        const counts = {};
-
-        // Count votes for each result text
-        for (const result of results) {
-            if (result.text) {
-                counts[result.text] = (counts[result.text] || 0) + 1;
+        _vote(results) {
+            const counts = {};
+            
+            // Count votes for each candidate text
+            for (const result of results) {
+                if (result.candidates && result.candidates.length > 0) {
+                    for (const cand of result.candidates) {
+                        counts[cand] = (counts[cand] || 0) + 1;
+                    }
+                }
             }
-        }
-
-        // Convert to array and sort by count (descending)
-        const sortedCandidates = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-
-        if (sortedCandidates.length === 0) return null;
-
-        const maxVotes = sortedCandidates[0][1];
-
-        // Find all candidates with the maximum number of votes
-        const topCandidates = sortedCandidates
-            .filter(candidate => candidate[1] === maxVotes)
-            .map(candidate => candidate[0]);
-
-        // If there's a clear winner, return it
-        if (topCandidates.length === 1) {
+    
+            // Convert to array and sort by count (descending)
+            const sortedCandidates = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    
+            if (sortedCandidates.length === 0) return null;
+    
+            const maxVotes = sortedCandidates[0][1];
+            
+            // Find all candidates with the maximum number of votes
+            const topCandidates = sortedCandidates
+                .filter(candidate => candidate[1] === maxVotes)
+                .map(candidate => candidate[0]);
+    
+            // If there's a clear winner, return it
+            if (topCandidates.length === 1) {
+                return topCandidates[0];
+            }
+    
+            // Tie-breaking: Choose the result from the highest-priority model
+            // Iterate through the models in order
+            for (const model of this.models) {
+                // Find the result produced by this model
+                const modelResult = results.find(r => r.model === model);
+                
+                // If this model produced valid candidates, check if any of them is a top candidate
+                if (modelResult && modelResult.candidates) {
+                    // We iterate through the model's candidates in order (assuming priority within the array)
+                    for (const cand of modelResult.candidates) {
+                        if (topCandidates.includes(cand)) {
+                            return cand;
+                        }
+                    }
+                }
+            }
+    
+            // Fallback (should rarely happen if logic is correct): return the first top candidate
             return topCandidates[0];
-        }
-
-        // Tie-breaking: Choose the result from the highest-priority model
-        // Iterate through the models in order
-        for (const model of this.models) {
-            // Find the result produced by this model
-            const modelResult = results.find(r => r.model === model);
-
-            // If this model produced a result and that result is among the top candidates, pick it
-            if (modelResult && modelResult.text && topCandidates.includes(modelResult.text)) {
-                return modelResult.text;
-            }
-        }
-
-        // Fallback (should rarely happen if logic is correct): return the first top candidate
-        return topCandidates[0];
-    }
-}
+        }}
 
 export default VllmOcr;
