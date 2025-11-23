@@ -3,11 +3,13 @@ import path from 'path';
 
 class GeminiOCR {
     constructor(config = {}) {
-        this.apiKey = config.apiKey || process.env.GOOGLE_API_KEY;
-        this.model = config.model || 'gemini-3-pro-preview';
+        this.provider = config.provider || 'google'; // 'google' or 'openai'
+        this.apiKey = config.apiKey || (this.provider === 'google' ? process.env.GOOGLE_API_KEY : process.env.OPENAI_API_KEY);
+        this.model = config.model || (this.provider === 'google' ? 'gemini-3-pro-preview' : 'gpt-4o');
+        this.baseUrl = config.baseUrl; // Optional custom base URL
 
         if (!this.apiKey) {
-            throw new Error('API Key is required. Provide it in config or set GOOGLE_API_KEY env var.');
+            throw new Error(`API Key is required for provider ${this.provider}.`);
         }
     }
 
@@ -26,16 +28,21 @@ class GeminiOCR {
             throw new Error('Invalid input. Expected file path string or Buffer.');
         }
 
-        return this._callApi(base64Image, mimeType);
+        if (this.provider === 'openai') {
+            return this._callOpenAiApi(base64Image, mimeType);
+        } else {
+            return this._callGoogleApi(base64Image, mimeType);
+        }
     }
 
-    async _callApi(base64Image, mimeType) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    async _callGoogleApi(base64Image, mimeType) {
+        const baseUrl = this.baseUrl || 'https://generativelanguage.googleapis.com';
+        const url = `${baseUrl}/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
 
         const payload = {
             contents: [{
                 parts: [
-                    { text: "You are a CAPTCHA testing engine tasked with ensuring the accuracy and security of CAPTCHA codes. Your responsibility is to identify the text within images, providing the most probable result with maximum effort. Return only the text, ensuring it is clean and contains only English letters and numbers, devoid of extra spaces or symbols. The scope you need to identify should include all uppercase English letters and numbers. No other characters will appear.The returned string length should be between 4 and 6 characters. Note that the CAPTCHA has a strong anti-bot design. You should make every effort to analyze and simulate human visual perception to identify the most likely result, instead of simply using OCR to recognize all characters. The actual characters should be relatively complete and occupy a larger proportion of the image. Tiny text should not be part of the result but rather a distraction design. Output a JSON object with a property 'text' containing the identified characters." },
+                    { text: "Read the text in this CAPTCHA image. Output a JSON object with a property 'text' containing the identified characters." },
                     {
                         inline_data: {
                             mime_type: mimeType,
@@ -62,7 +69,7 @@ class GeminiOCR {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`API Error: ${response.status} - ${errorText}`);
+            throw new Error(`Google API Error: ${response.status} - ${errorText}`);
         }
 
         const data = await response.json();
@@ -86,21 +93,82 @@ class GeminiOCR {
             }
 
             if (!rawText) {
-                 // Fallback: if no JSON part found, try to find first text part? 
-                 // Or maybe the thoughts are one part and the JSON is another. 
-                 // If we failed to find structured JSON, throw.
                  throw new Error('No valid JSON response found in candidates');
             }
 
-            // Post-processing: toUpperCase -> remove non-A-Z0-9
-            const processedText = rawText.toUpperCase().replace(/[^A-Z0-9]/g, '');
-            return processedText;
+            return this._postProcess(rawText);
 
         } catch (e) {
-            console.error('Failed to parse API response:', JSON.stringify(data, null, 2));
-            throw new Error(`Failed to parse API response: ${e.message}`);
+            console.error('Failed to parse Google API response:', JSON.stringify(data, null, 2));
+            throw new Error(`Failed to parse Google API response: ${e.message}`);
         }
+    }
+
+    async _callOpenAiApi(base64Image, mimeType) {
+        const baseUrl = this.baseUrl || 'https://api.openai.com/v1';
+        const url = `${baseUrl}/chat/completions`;
+
+        const payload = {
+            model: this.model,
+            messages: [
+                {
+                    role: "system",
+                    content: "You are a CAPTCHA solver. Output valid JSON with a 'text' field containing the characters found in the image. No markdown, no explanations."
+                },
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: "Read the text in this CAPTCHA image." },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: `data:${mimeType};base64,${base64Image}`
+                            }
+                        }
+                    ]
+                }
+            ],
+            response_format: { type: "json_object" }
+        };
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${this.apiKey}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`OpenAI API Error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+
+        try {
+            const content = data.choices[0].message.content;
+            const parsed = JSON.parse(content);
+            const rawText = parsed.text;
+
+            if (typeof rawText !== 'string') {
+                throw new Error('JSON response missing "text" string field');
+            }
+
+            return this._postProcess(rawText);
+
+        } catch (e) {
+            console.error('Failed to parse OpenAI API response:', JSON.stringify(data, null, 2));
+            throw new Error(`Failed to parse OpenAI API response: ${e.message}`);
+        }
+    }
+
+    _postProcess(text) {
+        // Post-processing: toUpperCase -> remove non-A-Z0-9
+        return text.toUpperCase().replace(/[^A-Z0-9]/g, '');
     }
 }
 
 export default GeminiOCR;
+
