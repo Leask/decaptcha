@@ -67,62 +67,67 @@ test('CAPTCHA Recognition Accuracy Test (Multi-Model Voting)', async (t) => {
     const VOTED_KEY = '🔥 VOTED (System)';
     modelStats[VOTED_KEY] = { correct: 0, total: 0 };
 
-    for (const filename of files) {
-        await t.test(`Recognize ${filename}`, async () => {
-            const filePath = path.join(TEST_CASES_DIR, filename);
-            const expected = path.parse(filename).name;
-            const expectedNorm = expected.toUpperCase().trim();
+    // Run tests in batches to save time
+    const CONCURRENCY = 5;
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+        const chunk = files.slice(i, i + CONCURRENCY);
+        await Promise.all(chunk.map(async (filename) => {
+            await t.test(`Recognize ${filename}`, async () => {
+                const filePath = path.join(TEST_CASES_DIR, filename);
+                const expected = path.parse(filename).name;
+                const expectedNorm = expected.toUpperCase().trim();
 
-            try {
-                const result = await ocr.recognize(filePath);
-                const actualNorm = result.final_text;
+                try {
+                    const result = await ocr.recognize(filePath);
+                    const actualNorm = result.final_text;
 
-                const isMatch = actualNorm === expectedNorm;
-                const statusIcon = isMatch ? '✅' : '❌';
+                    const isMatch = actualNorm === expectedNorm;
+                    const statusIcon = isMatch ? '✅' : '❌';
 
-                // Update Voted Stats
-                modelStats[VOTED_KEY].total++;
-                if (isMatch) {
-                    modelStats[VOTED_KEY].correct++;
-                }
-
-                console.log(`${statusIcon} [${filename}] Expected: ${expectedNorm} | Voted: ${actualNorm || 'NULL'}`);
-                
-                // Detailed breakdown & Stats update
-                console.log(`   Details:`);
-                result.details.forEach(r => {
-                    const modelId = r.model;
-                    const modelName = modelId.split('/').pop(); // Shorten name for display
-                    let modelStatus = '⚠️ Error';
-                    let output = r.error;
-                    
-                    // Update stats for individual models
-                    if (modelStats[modelId]) {
-                        modelStats[modelId].total++;
+                    // Update Voted Stats
+                    modelStats[VOTED_KEY].total++;
+                    if (isMatch) {
+                        modelStats[VOTED_KEY].correct++;
                     }
 
-                    if (!r.error) {
-                        // Check if ANY candidate matches expected
-                        const candidates = r.candidates || [];
-                        const isModelCorrect = candidates.includes(expectedNorm);
+                    console.log(`${statusIcon} [${filename}] Expected: ${expectedNorm} | Voted: ${actualNorm || 'NULL'}`);
+                    
+                    // Detailed breakdown & Stats update
+                    console.log(`   Details:`);
+                    result.details.forEach(r => {
+                        const modelId = r.model;
+                        const modelName = modelId.split('/').pop(); // Shorten name for display
+                        let modelStatus = '⚠️ Error';
+                        let output = r.error;
                         
-                        modelStatus = isModelCorrect ? '✅' : '❌';
-                        output = candidates.join(', '); // Show all possibilities
-                        
-                        if (isModelCorrect && modelStats[modelId]) {
-                            modelStats[modelId].correct++;
+                        // Update stats for individual models
+                        if (modelStats[modelId]) {
+                            modelStats[modelId].total++;
                         }
-                    }
-                    
-                    console.log(`     - ${modelStatus} ${modelName}: [${output}] (${r.duration}ms)`);
-                });
-                console.log(''); // Empty line separator
 
-                assert.strictEqual(actualNorm, expectedNorm, `Expected ${expectedNorm}, got ${actualNorm}`);
-            } catch (error) {
-                 assert.fail(`Error processing ${filename}: ${error.message}`);
-            }
-        });
+                        if (!r.error) {
+                            // Check if ANY candidate matches expected
+                            const candidates = r.candidates || [];
+                            const isModelCorrect = candidates.includes(expectedNorm);
+                            
+                            modelStatus = isModelCorrect ? '✅' : '❌';
+                            output = candidates.join(', '); // Show all possibilities
+                            
+                            if (isModelCorrect && modelStats[modelId]) {
+                                modelStats[modelId].correct++;
+                            }
+                        }
+                        
+                        console.log(`     - ${modelStatus} ${modelName}: [${output}] (${r.duration}ms)`);
+                    });
+                    console.log(''); // Empty line separator
+
+                    assert.strictEqual(actualNorm, expectedNorm, `Expected ${expectedNorm}, got ${actualNorm}`);
+                } catch (error) {
+                     assert.fail(`Error processing ${filename}: ${error.message}`);
+                }
+            });
+        }));
     }
 
     // --- Model Accuracy Leaderboard ---
